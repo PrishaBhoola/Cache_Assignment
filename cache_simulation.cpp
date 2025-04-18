@@ -7,6 +7,7 @@
 #include <list>
 #include <getopt.h>
 #include <cstdint>
+using namespace std;
 
 // Cache line states for MESI protocol
 enum class CacheLineState {
@@ -23,7 +24,7 @@ struct CacheLine {
     uint32_t tag;                 // Tag bits
     CacheLineState state;         // MESI state
     uint32_t lru_counter;         // LRU counter (higher = more recently used)
-    std::vector<uint8_t> data;    // Actual data stored in cache line
+    vector<uint8_t> data;    // Actual data stored in cache line
 
     // Constructor
     CacheLine(int blockSize) : valid(false), dirty(false), tag(0), state(CacheLineState::I), lru_counter(0) {
@@ -33,7 +34,7 @@ struct CacheLine {
 
 // Structure to represent a cache set
 struct CacheSet {
-    std::vector<CacheLine> lines; // Cache lines in this set
+    vector<CacheLine> lines; // Cache lines in this set
     uint32_t lru_timestamp;       // Global timestamp for LRU
 
     // Constructor
@@ -74,7 +75,7 @@ private:
     int S;              // Number of sets (2^s)
     int B;              // Block size in bytes (2^b)
     
-    std::vector<CacheSet> sets;
+    vector<CacheSet> sets;
 
     // Statistics
     uint64_t accesses;
@@ -103,11 +104,11 @@ public:
             sets.emplace_back(E, B);
         }
         
-        std::cout << "Created L1 Cache with:" << std::endl;
-        std::cout << "  Sets: " << S << " (2^" << s << ")" << std::endl;
-        std::cout << "  Associativity: " << E << std::endl;
-        std::cout << "  Block size: " << B << " bytes (2^" << b << ")" << std::endl;
-        std::cout << "  Cache size: " << (S * E * B) / 1024.0 << " KB" << std::endl;
+        cout << "Created L1 Cache with:" << endl;
+        cout << "  Sets: " << S << " (2^" << s << ")" << endl;
+        cout << "  Associativity: " << E << endl;
+        cout << "  Block size: " << B << " bytes (2^" << b << ")" << endl;
+        cout << "  Cache size: " << (S * E * B) / 1024.0 << " KB" << endl;
     }
 
     // Helper functions to extract address components
@@ -211,17 +212,17 @@ public:
 
     // Print statistics
     void printStats() {
-        std::cout << "Cache Statistics:" << std::endl;
-        std::cout << "  Total Accesses: " << accesses << std::endl;
-        std::cout << "  Reads: " << reads << std::endl;
-        std::cout << "  Writes: " << writes << std::endl;
-        std::cout << "  Hits: " << hits << std::endl;
-        std::cout << "  Misses: " << misses << std::endl;
-        std::cout << "  Evictions: " << evictions << std::endl;
-        std::cout << "  Writebacks: " << writebacks << std::endl;
-        std::cout << "  Miss Rate: " << (accesses > 0 ? (100.0 * misses / accesses) : 0) << "%" << std::endl;
-        std::cout << "  Total Cycles: " << total_cycles << std::endl;
-        std::cout << "  Idle Cycles: " << idle_cycles << std::endl;
+        cout << "Cache Statistics:" << endl;
+        cout << "  Total Accesses: " << accesses << endl;
+        cout << "  Reads: " << reads << endl;
+        cout << "  Writes: " << writes << endl;
+        cout << "  Hits: " << hits << endl;
+        cout << "  Misses: " << misses << endl;
+        cout << "  Evictions: " << evictions << endl;
+        cout << "  Writebacks: " << writebacks << endl;
+        cout << "  Miss Rate: " << (accesses > 0 ? (100.0 * misses / accesses) : 0) << "%" << endl;
+        cout << "  Total Cycles: " << total_cycles << endl;
+        cout << "  Idle Cycles: " << idle_cycles << endl;
     }
 
     // Get statistics values
@@ -238,7 +239,7 @@ public:
 };
 
 // Parse command line arguments
-bool parseArgs(int argc, char* argv[], std::string& tracePrefix, int& s, int& E, int& b, std::string& outFilename) {
+bool parseArgs(int argc, char* argv[], string& tracePrefix, int& s, int& E, int& b, string& outFilename) {
     int opt;
     while ((opt = getopt(argc, argv, "t:s:E:b:o:h")) != -1) {
         switch (opt) {
@@ -246,35 +247,35 @@ bool parseArgs(int argc, char* argv[], std::string& tracePrefix, int& s, int& E,
                 tracePrefix = optarg;
                 break;
             case 's':
-                s = std::stoi(optarg);
+                s = stoi(optarg);
                 break;
             case 'E':
-                E = std::stoi(optarg);
+                E = stoi(optarg);
                 break;
             case 'b':
-                b = std::stoi(optarg);
+                b = stoi(optarg);
                 break;
             case 'o':
                 outFilename = optarg;
                 break;
             case 'h':
-                std::cout << "Usage: " << argv[0] << " -t <tracefile> -s <s> -E <E> -b <b> [-o <outfilename>] [-h]" << std::endl;
-                std::cout << "-t <tracefile>: name of parallel application (e.g. app1) whose 4 traces are to be used" << std::endl;
-                std::cout << "-s <s>: number of set index bits (number of sets in the cache = S = 2^s)" << std::endl;
-                std::cout << "-E <E>: associativity (number of cache lines per set)" << std::endl;
-                std::cout << "-b <b>: number of block bits (block size = B = 2^b)" << std::endl;
-                std::cout << "-o: <outfilename> logs output in file for plotting etc." << std::endl;
-                std::cout << "-h: prints this help" << std::endl;
+                cout << "Usage: " << argv[0] << " -t <tracefile> -s <s> -E <E> -b <b> [-o <outfilename>] [-h]" << endl;
+                cout << "-t <tracefile>: name of parallel application (e.g. app1) whose 4 traces are to be used" << endl;
+                cout << "-s <s>: number of set index bits (number of sets in the cache = S = 2^s)" << endl;
+                cout << "-E <E>: associativity (number of cache lines per set)" << endl;
+                cout << "-b <b>: number of block bits (block size = B = 2^b)" << endl;
+                cout << "-o: <outfilename> logs output in file for plotting etc." << endl;
+                cout << "-h: prints this help" << endl;
                 return false;
             default:
-                std::cerr << "I argument" << std::endl;
+                cerr << "Invalid argument" << endl;
                 return false;
         }
     }
     
     // Check if required arguments are provided
     if (tracePrefix.empty() || s <= 0 || E <= 0 || b <= 0) {
-        std::cerr << "Missing or I required arguments. Use -h for help." << std::endl;
+        cerr << "Missing or Invalid required arguments. Use -h for help." << endl;
         return false;
     }
     
@@ -282,19 +283,19 @@ bool parseArgs(int argc, char* argv[], std::string& tracePrefix, int& s, int& E,
 }
 
 // Process a single trace file
-void processTraceFile(const std::string& filename, L1Cache& cache) {
-    std::ifstream traceFile(filename);
+void processTraceFile(const string& filename, L1Cache& cache) {
+    ifstream traceFile(filename);
     if (!traceFile.is_open()) {
-        std::cerr << "Failed to open trace file: " << filename << std::endl;
+        cerr << "Failed to open trace file: " << filename << endl;
         return;
     }
 
-    std::string operation;
-    std::string addressStr;
+    string operation;
+    string addressStr;
     
     while (traceFile >> operation >> addressStr) {
         // Convert hex string to uint32_t
-        uint32_t address = std::stoul(addressStr, nullptr, 16);
+        uint32_t address = stoul(addressStr, nullptr, 16);
         
         // Process the memory operation
         bool isWrite = (operation == "W");
@@ -305,11 +306,11 @@ void processTraceFile(const std::string& filename, L1Cache& cache) {
 }
 
 int main(int argc, char* argv[]) {
-    std::string tracePrefix;
+    string tracePrefix;
     int s = 0;
     int E = 0;
     int b = 0;
-    std::string outFilename;
+    string outFilename;
     
     // Parse command line arguments
     if (!parseArgs(argc, argv, tracePrefix, s, E, b, outFilename)) {
@@ -320,7 +321,7 @@ int main(int argc, char* argv[]) {
     L1Cache cache(s, E, b);
     
     // Process the trace file (for single core)
-    std::string traceFile = tracePrefix + "_proc0.trace";
+    string traceFile = tracePrefix + "_proc0.trace";
     processTraceFile(traceFile, cache);
     
     // Print statistics
@@ -328,21 +329,21 @@ int main(int argc, char* argv[]) {
     
     // If an output file is specified, write the statistics to it
     if (!outFilename.empty()) {
-        std::ofstream outFile(outFilename);
+        ofstream outFile(outFilename);
         if (outFile.is_open()) {
-            outFile << "Accesses: " << cache.getAccesses() << std::endl;
-            outFile << "Reads: " << cache.getReads() << std::endl;
-            outFile << "Writes: " << cache.getWrites() << std::endl;
-            outFile << "Hits: " << cache.getHits() << std::endl;
-            outFile << "Misses: " << cache.getMisses() << std::endl;
-            outFile << "Evictions: " << cache.getEvictions() << std::endl;
-            outFile << "Writebacks: " << cache.getWritebacks() << std::endl;
-            outFile << "Miss Rate: " << cache.getMissRate() << "%" << std::endl;
-            outFile << "Total Cycles: " << cache.getTotalCycles() << std::endl;
-            outFile << "Idle Cycles: " << cache.getIdleCycles() << std::endl;
+            outFile << "Accesses: " << cache.getAccesses() << endl;
+            outFile << "Reads: " << cache.getReads() << endl;
+            outFile << "Writes: " << cache.getWrites() << endl;
+            outFile << "Hits: " << cache.getHits() << endl;
+            outFile << "Misses: " << cache.getMisses() << endl;
+            outFile << "Evictions: " << cache.getEvictions() << endl;
+            outFile << "Writebacks: " << cache.getWritebacks() << endl;
+            outFile << "Miss Rate: " << cache.getMissRate() << "%" << endl;
+            outFile << "Total Cycles: " << cache.getTotalCycles() << endl;
+            outFile << "Idle Cycles: " << cache.getIdleCycles() << endl;
             outFile.close();
         } else {
-            std::cerr << "Failed to open output file: " << outFilename << std::endl;
+            cerr << "Failed to open output file: " << outFilename << endl;
         }
     }
     
