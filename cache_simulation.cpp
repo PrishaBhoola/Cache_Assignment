@@ -497,14 +497,14 @@ bool L1Cache::accessMemory(bool isWrite, uint32_t address, uint64_t current_cycl
         return false;
     }
 
-    accesses++;
-    total_cycles++;  // Always takes at least 1 cycle
+    // accesses++;
+    // total_cycles++;  // Always takes at least 1 cycle
     
-    if (isWrite) {
-        writes++;
-    } else {
-        reads++;
-    }
+    // if (isWrite) {
+    //     writes++;
+    // } else {
+    //     reads++;
+    // }
 
     uint32_t tag = getTag(address);
     uint32_t setIndex = getSetIndex(address);
@@ -535,6 +535,7 @@ bool L1Cache::accessMemory(bool isWrite, uint32_t address, uint64_t current_cycl
                     << mesiStateToString(line.state) << endl;
             switch (line.state) {
                 case CacheLineState::M:
+                    writes++;
                     // Already modified, nothing to do
                     break;
                     
@@ -542,6 +543,7 @@ bool L1Cache::accessMemory(bool isWrite, uint32_t address, uint64_t current_cycl
                     // Exclusive to Modified
                     line.state = CacheLineState::M;
                     line.dirty = true;
+                    writes++;
                     break;
                     
                 case CacheLineState::S:
@@ -558,6 +560,7 @@ bool L1Cache::accessMemory(bool isWrite, uint32_t address, uint64_t current_cycl
                     // Send invalidate message on bus
                     BusTransaction trans(BusOp::INVALIDATE, getBlockAddress(address), coreId);
                     pending_was_shared = bus->requestBus(trans, this, current_cycle);
+                    line.state = CacheLineState::E;  // Change to Modified
                     }
                     // Will complete in continuePendingAccess
                     return false;
@@ -571,7 +574,13 @@ bool L1Cache::accessMemory(bool isWrite, uint32_t address, uint64_t current_cycl
                 cout << "[STATE] Core " << coreId 
                     << " changed state from " << mesiStateToString(oldState)
                     << " to " << mesiStateToString(line.state) << endl;
-            }            
+            } 
+
+        }
+        else {
+            // Read hit: just update LRU
+            reads++;
+            line.dirty = false;  // Read does not modify the line
         }
         
         // Hit was handled completely
@@ -579,7 +588,7 @@ bool L1Cache::accessMemory(bool isWrite, uint32_t address, uint64_t current_cycl
         
     } else {
         // Cache miss
-        misses++;
+        
         
         // BusTransaction trans(isWrite ? BusOp::BUS_RDX : BusOp::BUS_RD, getBlockAddress(address), coreId);
         // bus->requestBus(trans, this);
@@ -587,6 +596,12 @@ bool L1Cache::accessMemory(bool isWrite, uint32_t address, uint64_t current_cycl
             // Bus is busy, can't proceed with miss handling
             idle_cycles++;
             return false;
+        }
+        misses++;
+        if (isWrite) {
+            writes++;
+        } else {
+            reads++;
         }
 
         // Set up pending request
@@ -705,6 +720,7 @@ bool L1Cache::continuePendingAccess(uint64_t current_cycle) {
         
         // Set appropriate MESI state
         if (isWrite) {
+            writes++;
             newLine.state = CacheLineState::M;
         } else {
             if (pending_was_shared) {
