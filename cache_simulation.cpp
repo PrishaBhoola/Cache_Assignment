@@ -304,7 +304,7 @@ private:
     bool simulation_running;
     uint64_t bus_busy_until; // Track when the bus becomes free
     bool bus_in_use;         // Flag to indicate bus is in use
-    queue<int> pending_requests; // Queue for pending requests
+    queue<BusTransaction> pending_requests; // Queue for pending requests
     
 
 
@@ -317,16 +317,23 @@ public:
     void registerCache(L1Cache* cache) {
         caches.push_back(cache);
     }
-    void addPendingRequest(int coreId) {
+    void addPendingRequest(BusTransaction trans) {
         unique_lock<mutex> lock(bus_mutex);
-        pending_requests.push(coreId);
+        pending_requests.push(trans);
     }
     int getPendingRequest(){
-        return pending_requests.front();
+        return pending_requests.front().sourceCore;
     }
     void popPendingRequest() {
         unique_lock<mutex> lock(bus_mutex);
         pending_requests.pop();
+    }
+    bool check_empty(){
+        return pending_requests.empty();
+    }
+    BusTransaction getPendingRequestTransaction() {
+        unique_lock<mutex> lock(bus_mutex);
+        return pending_requests.front();
     }
     void change();
     // Request bus access for a transaction
@@ -335,9 +342,9 @@ public:
         unique_lock<mutex> lock(bus_mutex);
         
         // Check if bus is busy
-        if (bus_in_use || current_cycle < bus_busy_until) {
-            return false; // Bus is busy, request not accepted
-        }
+        // if (bus_in_use || current_cycle < bus_busy_until) {
+        //     return false; // Bus is busy, request not accepted
+        // }
         
         // Bus is now in use
         bus_in_use = true;
@@ -456,9 +463,11 @@ bool L1Cache::snoopBus(const BusTransaction& trans, uint64_t current_cycle) {
                 
                 // Record bus transfer
                 bus_transfers++;
-                bus->addPendingRequest(trans.sourceCore);
+                BusTransaction uptrans(BusOp::BUS_UPD, getBlockAddress(trans.address), trans.sourceCore);
+                bus->addPendingRequest(trans);
                 wm_s = true;  // Set write miss to shared line
-                bus->addPendingRequest(coreId);
+                BusTransaction wbTrans(BusOp::WRITEBACK, getBlockAddress(address), coreId);
+                bus->addPendingRequest(wbTrans);
                 respondToTransaction = true;
             } else if (line.state == CacheLineState::E) {
                 // Change Exclusive to Shared
@@ -570,7 +579,9 @@ bool L1Cache::accessMemory(bool isWrite, uint32_t address, uint64_t current_cycl
                     // Shared to Modified, need to invalidate others
                     if (bus->isBusy(current_cycle)) {
                         // Bus is busy, can't proceed
-                        bus->addPendingRequest(coreId);
+                        BusTransaction newTrans(BusOp::INVALIDATE, getBlockAddress(address), coreId);
+                        bus->addPendingRequest(newTrans);
+                        has_pending_request = true;
                         idle_cycles++;
                         return false;
                     }
@@ -615,10 +626,15 @@ bool L1Cache::accessMemory(bool isWrite, uint32_t address, uint64_t current_cycl
         // Cache miss
         // BusTransaction trans(isWrite ? BusOp::BUS_RDX : BusOp::BUS_RD, getBlockAddress(address), coreId);
         // bus->requestBus(trans, this);
+        has_pending_request = true;
+        pending_address = address;
+        pending_is_write = isWrite;
+        is_waiting_for_bus = true;
+        BusOp busOp = isWrite ? BusOp::BUS_RDX : BusOp::BUS_RD;
+        BusTransaction trans(busOp, getBlockAddress(address), coreId);
         if (bus->isBusy(current_cycle)) {
             // Bus is busy, can't proceed with miss handling
-            has_pending_request = true;
-            bus->addPendingRequest(coreId);
+            bus->addPendingRequest(trans);
             idle_cycles++;
             return false;
         }
@@ -630,13 +646,9 @@ bool L1Cache::accessMemory(bool isWrite, uint32_t address, uint64_t current_cycl
         }
 
         // Set up pending request
-        has_pending_request = true;
-        pending_address = address;
-        pending_is_write = isWrite;
-        is_waiting_for_bus = true;
+        
         // pending_was_shared = trans.serviced;
-        BusOp busOp = isWrite ? BusOp::BUS_RDX : BusOp::BUS_RD;
-        BusTransaction trans(busOp, getBlockAddress(address), coreId);
+        
         pending_was_shared = bus->requestBus(trans, this, current_cycle);       
         // Issue appropriate bus request
         // if (isWrite) {
@@ -671,7 +683,10 @@ bool L1Cache::continuePendingAccess(uint64_t current_cycle) {
             return false;
         }
         bus->popPendingRequest();
-        bus->change();
+        if (!bus->check_empty()){
+            bus->change();
+            bus->requestBus(bus->getPendingRequestTransaction(), this, current_cycle);
+        }
 
         
         uint32_t address = pending_address;
@@ -1001,7 +1016,7 @@ public:
     }
 };
 void Bus::change(){
-    simulator->change_has_pending_request(pending_requests.front());
+    simulator->change_has_pending_request(pending_requests.front().sourceCore);
 }
 // Parse command line arguments
 bool parseArgs(int argc, char* argv[], string& tracePrefix, int& s, int& E, int& b, string& outFilename) {
