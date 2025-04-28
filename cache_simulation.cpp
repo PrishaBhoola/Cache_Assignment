@@ -320,6 +320,10 @@ public:
     void addPendingRequest(BusTransaction trans) {
         unique_lock<mutex> lock(bus_mutex);
         pending_requests.push(trans);
+        cout << trans.sourceCore << " added to queue" << endl;
+    }
+    L1Cache* getCache(int coreId) {
+        return caches[coreId];
     }
     int getPendingRequest(){
         return pending_requests.front().sourceCore;
@@ -632,9 +636,10 @@ bool L1Cache::accessMemory(bool isWrite, uint32_t address, uint64_t current_cycl
         is_waiting_for_bus = true;
         BusOp busOp = isWrite ? BusOp::BUS_RDX : BusOp::BUS_RD;
         BusTransaction trans(busOp, getBlockAddress(address), coreId);
+        bus->addPendingRequest(trans);
         if (bus->isBusy(current_cycle)) {
             // Bus is busy, can't proceed with miss handling
-            bus->addPendingRequest(trans);
+            cout << "Bus is busy" << endl;
             idle_cycles++;
             return false;
         }
@@ -682,11 +687,7 @@ bool L1Cache::continuePendingAccess(uint64_t current_cycle) {
             idle_cycles++;
             return false;
         }
-        bus->popPendingRequest();
-        if (!bus->check_empty()){
-            bus->change();
-            bus->requestBus(bus->getPendingRequestTransaction(), this, current_cycle);
-        }
+        
 
         
         uint32_t address = pending_address;
@@ -787,7 +788,11 @@ bool L1Cache::continuePendingAccess(uint64_t current_cycle) {
         
         // Update LRU status
         sets[setIndex].updateLRU(lineIndex);
-        
+        bus->popPendingRequest();
+        if (!bus->check_empty()){
+            bus->change();
+            bus->getCache(bus->getPendingRequest())->pending_was_shared =  bus->requestBus(bus->getPendingRequestTransaction(), bus->getCache(bus->getPendingRequest()), current_cycle);
+        }
         // Account for memory access time
         if (!pending_was_shared) {
             // If from memory
