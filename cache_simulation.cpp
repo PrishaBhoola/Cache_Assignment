@@ -54,7 +54,8 @@ struct BusTransaction {
     bool serviced; // Whether someone has responded to this transaction
     
     BusTransaction(BusOp op, uint32_t addr, int core) 
-        : operation(op), address(addr), sourceCore(core), serviced(false) {}
+        : operation(op), address(addr), sourceCore(core), serviced(false) {cout<<"BusTransaction created" << endl;}
+    
 };
 
 // Structure to represent a cache line
@@ -134,6 +135,7 @@ private:
     uint64_t writebacks;
     uint64_t total_cycles;
     uint64_t idle_cycles;
+    uint64_t execution_cycles;
     uint64_t invalidations;
     uint64_t bus_transfers;
     uint64_t data_traffic_bytes;
@@ -144,7 +146,6 @@ private:
     uint32_t pending_address;
     bool pending_is_write;
     bool pending_was_shared; // For write hits to shared lines
-    bool wm_s; // For write miss to shared line
 
 public:
     // Constructor
@@ -153,7 +154,7 @@ public:
           accesses(0), hits(0), misses(0), evictions(0), reads(0), writes(0),
           writebacks(0), total_cycles(0), idle_cycles(0), invalidations(0),
           bus_transfers(0), data_traffic_bytes(0),
-          has_pending_request(false), is_waiting_for_bus(false), wm_s(false) {
+          has_pending_request(false), is_waiting_for_bus(false) {
         
         S = 1 << s;  // 2^s
         B = 1 << b;  // 2^b
@@ -290,7 +291,6 @@ public:
     bool hasPendingRequest() const { return has_pending_request; }
     bool isBlocked() const { return has_pending_request; }
     int getBlockBits() const { return b; }
-    bool WM_S() const { return wm_s; }
 };
 
 // Bus implementation for inter-cache communication
@@ -317,9 +317,9 @@ public:
         caches.push_back(cache);
     }
     void addPendingRequest(BusTransaction trans) {
-        unique_lock<mutex> lock(bus_mutex);
+        cout << trans.sourceCore<< " added" << endl;
         pending_requests.push(trans);
-        cout << trans.sourceCore << " added to queue" << endl;
+        
     }
     L1Cache* getCache(int coreId) {
         return caches[coreId];
@@ -328,19 +328,17 @@ public:
         return pending_requests.front().sourceCore;
     }
     void popPendingRequest() {
-        unique_lock<mutex> lock(bus_mutex);
         pending_requests.pop();
+        cout<< "Popped pending request from queue" << endl;
     }
     bool check_empty(){
         return pending_requests.empty();
     }
     BusTransaction getPendingRequestTransaction() {
-        unique_lock<mutex> lock(bus_mutex);
         return pending_requests.front();
     }
     void change();
     void invalidate_all(BusTransaction trans, L1Cache* requester, uint64_t current_cycle) {
-        unique_lock<mutex> lock(bus_mutex);
         for (auto cache : caches) {
             if (cache != requester) {
                 cache->snoopBus(trans, current_cycle);
@@ -350,7 +348,6 @@ public:
     // Request bus access for a transaction
     // Returns true if the transaction was serviced by another cache
     bool requestBus(BusTransaction trans, L1Cache* requester, uint64_t current_cycle) {
-        unique_lock<mutex> lock(bus_mutex);
         
         // Check if bus is busy
         // if (bus_in_use || current_cycle < bus_busy_until) {
@@ -477,6 +474,9 @@ int L1Cache::snoopBus(const BusTransaction& trans, uint64_t current_cycle) {
             // Another core is reading
             if (line.state == CacheLineState::M) {
                 // Need to provide data and change to Shared
+                cout<< "[SNOOP] Core " << coreId 
+                    << " providing data for address 0x" << hex << address << dec 
+                    << " — changing state from M to S" << endl;
                 line.state = CacheLineState::S;
                 line.dirty = false;
                 
@@ -486,7 +486,6 @@ int L1Cache::snoopBus(const BusTransaction& trans, uint64_t current_cycle) {
                 
                 // Record bus transfer
                 bus_transfers++;
-                wm_s = true;  // Set write miss to shared line
                 BusTransaction wbTrans(BusOp::WRITEBACK, getBlockAddress(address), coreId);
                 bus->addPendingRequest(wbTrans);
                 respondToTransaction = 1;
@@ -524,13 +523,14 @@ int L1Cache::snoopBus(const BusTransaction& trans, uint64_t current_cycle) {
             // Nothing to do for these operations when snooping
             break;
     }
+    
     if (oldState != line.state) {
         cout << "[SNOOP] Core " << coreId 
             << " changed state from " << mesiStateToString(oldState)
             << " to " << mesiStateToString(line.state) 
             << " on " << static_cast<int>(trans.operation) << endl;
     }
-
+    cout << "reached here" << endl;
     return respondToTransaction;
 }
 
@@ -614,7 +614,7 @@ bool L1Cache::accessMemory(bool isWrite, uint32_t address, uint64_t current_cycl
             hits++;
             reads++;
         }
-        
+        execution_cycles++;
         // Hit was handled completely
         return true;
         
@@ -622,6 +622,7 @@ bool L1Cache::accessMemory(bool isWrite, uint32_t address, uint64_t current_cycl
         // Cache miss
         // BusTransaction trans(isWrite ? BusOp::BUS_RDX : BusOp::BUS_RD, getBlockAddress(address), coreId);
         // bus->requestBus(trans, this);
+        idle_cycles++;
         misses++;
         if (isWrite) {
             writes++;
@@ -634,7 +635,12 @@ bool L1Cache::accessMemory(bool isWrite, uint32_t address, uint64_t current_cycl
         is_waiting_for_bus = true;
         BusOp busOp = isWrite ? BusOp::BUS_RDX : BusOp::BUS_RD;
         BusTransaction trans(busOp, getBlockAddress(address), coreId);
-        bus->addPendingRequest(trans);
+        if (bus->check_empty()){
+            cout<<current_cycle << " " << bus->getBusAvailableCycle() << endl;
+            bus->addPendingRequest(trans);
+            pending_was_shared = bus->requestBus(trans, this, current_cycle);
+        }
+        else bus->addPendingRequest(trans);
         // pending_was_shared = bus->requestBus(trans, this, current_cycle);
         // if (!pending_was_shared){
         //     bus->addPendingRequest(trans);
@@ -652,7 +658,8 @@ bool L1Cache::accessMemory(bool isWrite, uint32_t address, uint64_t current_cycl
 
 // Implementation of L1Cache::continuePendingAccess
 bool L1Cache::continuePendingAccess(uint64_t current_cycle) {
-        if (coreId != bus->getPendingRequest() && !wm_s){
+        if (coreId != bus->getPendingRequest() ){
+            // cout<<"returning false" << endl;
             // Not our turn to process the pending request
             return false;
         }
@@ -661,7 +668,6 @@ bool L1Cache::continuePendingAccess(uint64_t current_cycle) {
         }
         
         if (current_cycle < bus->getBusAvailableCycle()) {
-            // Still waiting for bus/transfer to complete
             idle_cycles++;
             return false;
         }
@@ -687,6 +693,24 @@ bool L1Cache::continuePendingAccess(uint64_t current_cycle) {
                 << " to " << mesiStateToString(line.state) 
                 << " after invalidation" << endl;
             
+            sets[setIndex].updateLRU(lineIndex);
+            bus->popPendingRequest();
+            if (!bus->check_empty()){
+                if (bus->getPendingRequestTransaction().operation == BusOp::WRITEBACK){
+                    // If the pending request is a read exclusive, we need to check if it was shared
+                    bus->getCache(bus->getPendingRequest())->pending_was_shared =  bus->requestBus(bus->getPendingRequestTransaction(), bus->getCache(bus->getPendingRequest()), current_cycle);
+                    bus->popPendingRequest();
+                }
+                if (!bus->check_empty()){
+                    // If the pending request is a read exclusive, we need to check if it was shared
+                    bus->getCache(bus->getPendingRequest())->pending_was_shared =  bus->requestBus(bus->getPendingRequestTransaction(), bus->getCache(bus->getPendingRequest()), current_cycle);
+                }
+            }
+            else{
+                bus->releaseBus(current_cycle);
+            }
+            // Request complete
+            execution_cycles++;
             has_pending_request = false;
             return true;
         }
@@ -780,6 +804,7 @@ bool L1Cache::continuePendingAccess(uint64_t current_cycle) {
             bus->releaseBus(current_cycle);
         }
         // Request complete
+        execution_cycles++;
         has_pending_request = false;
         return true;
     }
@@ -859,7 +884,6 @@ public:
             for (int i = 0; i < NUM_CORES; i++) {
                 // Skip if core is finished
                 if (coreFinished[i]) {
-                    caches[i]->incrementIdleCycles();
                     continue;
                 }
                 
