@@ -195,10 +195,6 @@ public:
     uint32_t getBlockAddress(uint32_t address) const {
         return address & ~((1 << b) - 1);
     }
-
-    void incrementIdleCycles() {
-        idle_cycles++;
-    }
     
     // Find a line in a set by tag
     int findLine(uint32_t setIndex, uint32_t tag) {
@@ -239,8 +235,9 @@ public:
         cout << "  Invalidations: " << invalidations << endl;
         cout << "  Data Traffic (Bytes): " << data_traffic_bytes << endl;
         cout << "  Miss Rate: " << (accesses > 0 ? (100.0 * misses / accesses) : 0) << "%" << endl;
-        cout << "  Total Cycles: " << total_cycles << endl;
+        cout << "  Total Cycles: " << idle_cycles + execution_cycles << endl;
         cout << "  Idle Cycles: " << idle_cycles << endl;
+        cout << "  Execution Cycles: " << execution_cycles << endl;
     }
 
     // Print current cache state (for debugging)
@@ -285,6 +282,7 @@ public:
     uint64_t getWritebacks() const { return writebacks; }
     uint64_t getTotalCycles() const { return total_cycles; }
     uint64_t getIdleCycles() const { return idle_cycles; }
+    uint64_t getExecutionCycles() const { return execution_cycles; }
     uint64_t getInvalidations() const { return invalidations; }
     uint64_t getDataTrafficBytes() const { return data_traffic_bytes; }
     double getMissRate() const { return (accesses > 0) ? (100.0 * misses / accesses) : 0; }
@@ -479,10 +477,10 @@ int L1Cache::snoopBus(const BusTransaction& trans, uint64_t current_cycle) {
                     << " — changing state from M to S" << endl;
                 line.state = CacheLineState::S;
                 line.dirty = false;
+                writebacks++;
                 
                 // Cache-to-cache transfer
                 data_traffic_bytes += B;
-                total_cycles += calculateTransferCycles(W);
                 
                 // Record bus transfer
                 bus_transfers++;
@@ -500,6 +498,7 @@ int L1Cache::snoopBus(const BusTransaction& trans, uint64_t current_cycle) {
             if (line.state == CacheLineState::M) {
                 line.state = CacheLineState::I;
                 line.dirty = false;
+                writebacks++;
                 respondToTransaction = 2;
             }
             else if (line.state == CacheLineState::E || line.state == CacheLineState::S) {
@@ -625,10 +624,55 @@ bool L1Cache::accessMemory(bool isWrite, uint32_t address, uint64_t current_cycl
         idle_cycles++;
         misses++;
         if (isWrite) {
+            invalidations++;
             writes++;
         } else {
             reads++;
         }
+
+        bool foundEmpty = false;
+        
+        // First, look for an invalid line
+        for (int i = 0; i < E; i++) {
+            if (!sets[setIndex].lines[i].valid) {
+                lineIndex = i;
+                foundEmpty = true;
+                break;
+            }
+        }
+        
+        // If no empty line, use LRU replacement policy
+        if (!foundEmpty) {
+            lineIndex = sets[setIndex].findLRULine();
+            
+            // Handle eviction of the LRU line
+            CacheLine& line = sets[setIndex].lines[lineIndex];
+            if (line.valid) {
+                evictions++;
+                uint32_t evictionAddress = (line.tag << (s + b)) | (setIndex << b);
+                    
+                cout << "[EVICT] Core " << coreId 
+                    << " evicting 0x" << hex << evictionAddress << dec 
+                    << " — dirty=" << line.dirty << endl;
+                // If dirty, need to write back to memory
+                if (line.dirty) {
+                    writebacks++;
+                    data_traffic_bytes += B;
+                    
+                    
+                    
+                    // Broadcast writeback on bus
+                    BusTransaction wbTrans(BusOp::WRITEBACK, evictionAddress, coreId);
+                    if (bus->check_empty()){
+                        cout<<current_cycle << " " << bus->getBusAvailableCycle() << endl;
+                        bus->addPendingRequest(wbTrans);
+                        pending_was_shared = bus->requestBus(wbTrans, this, current_cycle);
+                    }
+                    else bus->addPendingRequest(wbTrans);
+                }
+            }
+        }
+
         has_pending_request = true;
         pending_address = address;
         pending_is_write = isWrite;
@@ -659,6 +703,7 @@ bool L1Cache::accessMemory(bool isWrite, uint32_t address, uint64_t current_cycl
 // Implementation of L1Cache::continuePendingAccess
 bool L1Cache::continuePendingAccess(uint64_t current_cycle) {
         if (coreId != bus->getPendingRequest() ){
+            execution_cycles++;
             // cout<<"returning false" << endl;
             // Not our turn to process the pending request
             return false;
@@ -718,48 +763,7 @@ bool L1Cache::continuePendingAccess(uint64_t current_cycle) {
         // For actual misses, handle cache line allocation
         
         // Find a place to put this block
-        bool foundEmpty = false;
-        lineIndex = -1;
         
-        // First, look for an invalid line
-        for (int i = 0; i < E; i++) {
-            if (!sets[setIndex].lines[i].valid) {
-                lineIndex = i;
-                foundEmpty = true;
-                break;
-            }
-        }
-        
-        // If no empty line, use LRU replacement policy
-        if (!foundEmpty) {
-            lineIndex = sets[setIndex].findLRULine();
-            
-            // Handle eviction of the LRU line
-            CacheLine& line = sets[setIndex].lines[lineIndex];
-            if (line.valid) {
-                evictions++;
-                
-                // If dirty, need to write back to memory
-                if (line.dirty) {
-                    writebacks++;
-                    data_traffic_bytes += B;
-                    
-                    uint32_t evictionAddress = (line.tag << (s + b)) | (setIndex << b);
-                    
-                    cout << "[EVICT] Core " << coreId 
-                        << " evicting 0x" << hex << evictionAddress << dec 
-                        << " — dirty=" << line.dirty << endl;
-                    
-                    // Broadcast writeback on bus
-                    BusTransaction wbTrans(BusOp::WRITEBACK, evictionAddress, coreId);
-                    if (bus->isBusy(current_cycle)) {
-                        // Need to try again later
-                        return false;
-                    }
-                    bus->requestBus(wbTrans, this, current_cycle);
-                }
-            }
-        }
         
         // Load the new line
         CacheLine& newLine = sets[setIndex].lines[lineIndex];
