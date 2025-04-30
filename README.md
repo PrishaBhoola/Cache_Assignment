@@ -64,3 +64,5 @@ To remove the compiled executable and temporary files:
 ```bash
 make clean
 ```
+## Bonus
+The bonus folder contains trace for false sharing.
