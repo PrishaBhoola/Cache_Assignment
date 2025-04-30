@@ -145,16 +145,18 @@ private:
     bool is_waiting_for_bus;
     uint32_t pending_address;
     bool pending_is_write;
-    int pending_response; 
+    int pending_response;
+    int cache_bus_request; 
 
 public:
     // Constructor
+    
     L1Cache(int core_id, int set_bits, int associativity, int block_bits) 
         : coreId(core_id), s(set_bits), E(associativity), b(block_bits),
           accesses(0), hits(0), misses(0), evictions(0), reads(0), writes(0),
           writebacks(0), total_cycles(0), idle_cycles(0), invalidations(0),
           bus_transfers(0), data_traffic_bytes(0),
-          has_pending_request(false), is_waiting_for_bus(false), pending_response(0) {
+          has_pending_request(false), is_waiting_for_bus(false), pending_response(0), cache_bus_request(0) {
         
         S = 1 << s;  // 2^s
         B = 1 << b;  // 2^b
@@ -184,12 +186,17 @@ public:
     uint32_t getBlockOffset(uint32_t address) const {
         return address & ((1 << b) - 1);
     }
+    int cacheBusrequest(){
+        return cache_bus_request;
+    }
     
     // Get block address (remove offset bits)
     uint32_t getBlockAddress(uint32_t address) const {
         return address & ~((1 << b) - 1);
     }
-    
+    void modifytotalcycles(uint64_t cycles) {
+        total_cycles = cycles;
+    }
     // Find a line in a set by tag
     int findLine(uint32_t setIndex, uint32_t tag) {
         for (int i = 0; i < E; i++) {
@@ -215,21 +222,19 @@ public:
     }
 
     // Print statistics
-    void printStats() {
-        cout << "\nCache Statistics for Core " << coreId << ":" << endl;
-        cout << "  Total Accesses: " << accesses << endl;
-        cout << "  Reads: " << reads << endl;
-        cout << "  Writes: " << writes << endl;
-        cout << "  Hits: " << hits << endl;
-        cout << "  Misses: " << misses << endl;
-        cout << "  Evictions: " << evictions << endl;
-        cout << "  Writebacks: " << writebacks << endl;
-        cout << "  Invalidations: " << invalidations << endl;
-        cout << "  Data Traffic (Bytes): " << data_traffic_bytes << endl;
-        cout << "  Miss Rate: " << (accesses > 0 ? (100.0 * misses / accesses) : 0) << "%" << endl;
-        cout << "  Total Cycles: " << idle_cycles + execution_cycles << endl;
-        cout << "  Idle Cycles: " << idle_cycles << endl;
-        cout << "  Execution Cycles: " << execution_cycles << endl;
+    void printStats(ostream& os = cout) {
+        os << "\nCache Statistics for Core " << coreId << ":" << endl;
+        os << "  Total Instructions: " << accesses << endl;
+        os << "  Total Reads: " << reads << endl;
+        os << "  Total Writes: " << writes << endl;
+        os << "  Total Execution Cycles: " << accesses << endl;
+        os << "  Idle Cycles: " << idle_cycles << endl;
+        os << "  Cache Misses: " << misses << endl;
+        os << "  Cache Miss Rate: " << (accesses > 0 ? (100.0 * misses / accesses) : 0) << "%" << endl;
+        os << "  Cache Evictions: " << evictions << endl;
+        os << "  Writebacks: " << writebacks << endl;
+        os << "  Bus Invalidations: " << invalidations << endl;
+        os << "  Data Traffic (Bytes): " << data_traffic_bytes << endl;    
     }
 
     // Print current cache state (for debugging)
@@ -330,7 +335,6 @@ public:
     bool hasPendingRequests() {
         return !pending_requests.empty();
     }
-    
     int getNextPendingRequestCore() {
         if (pending_requests.empty()) {
             return -1;
@@ -394,7 +398,7 @@ public:
             bus_busy_until = current_cycle + 100;
         } else if (trans.operation == BusOp::INVALIDATE) {
             // Invalidations are quick
-            bus_busy_until = current_cycle + 10;
+            bus_busy_until = current_cycle;
         }
         
         return true;
@@ -458,7 +462,7 @@ int L1Cache::snoopBus(const BusTransaction& trans, uint64_t current_cycle) {
     }
 
     CacheLine& line = sets[setIndex].lines[lineIndex];
-    CacheLineState oldState = line.state;
+    // CacheLineState oldState = line.state;
     int respondToTransaction = 0;
 
     switch (trans.operation) {
@@ -469,7 +473,7 @@ int L1Cache::snoopBus(const BusTransaction& trans, uint64_t current_cycle) {
                 line.state = CacheLineState::S;
                 line.dirty = false;
                 writebacks++;
-                data_traffic_bytes += B;
+                data_traffic_bytes += 2*B;
                 bus_transfers++;
                 
                 // Signal that we're responding with data
@@ -477,9 +481,11 @@ int L1Cache::snoopBus(const BusTransaction& trans, uint64_t current_cycle) {
             } else if (line.state == CacheLineState::E) {
                 // Change Exclusive to Shared
                 line.state = CacheLineState::S;
+                data_traffic_bytes += B;
                 respondToTransaction = 1;
             } else if (line.state == CacheLineState::S) {
                 // Already shared, just indicate we have it
+                data_traffic_bytes += B;
                 respondToTransaction = 1;
             }
             break;
@@ -505,7 +511,6 @@ int L1Cache::snoopBus(const BusTransaction& trans, uint64_t current_cycle) {
         case BusOp::INVALIDATE:
             // Another core requests invalidation
             if (line.state != CacheLineState::I) {
-                invalidations++;
                 line.state = CacheLineState::I;
                 line.valid = false;
             }
@@ -566,6 +571,8 @@ bool L1Cache::accessMemory(bool isWrite, uint32_t address, uint64_t current_cycl
                     // Add invalidation request to bus
                     BusTransaction trans(BusOp::INVALIDATE, getBlockAddress(address), coreId);
                     bus->addPendingRequest(trans);
+                    cache_bus_request++;
+                    invalidations++;
                     
                     // Will be processed later - not a complete hit yet
                     return false;
@@ -588,8 +595,10 @@ bool L1Cache::accessMemory(bool isWrite, uint32_t address, uint64_t current_cycl
         // Cache miss
         idle_cycles++;
         misses++;
+        data_traffic_bytes += B;
         
         if (isWrite) {
+            invalidations++;
             writes++;
         } else {
             reads++;
@@ -621,17 +630,16 @@ bool L1Cache::accessMemory(bool isWrite, uint32_t address, uint64_t current_cycl
             
             if (line.valid) {
                 evictions++;
-                
                 // If dirty, need to write back to memory
                 if (line.dirty) {
                     writebacks++;
                     data_traffic_bytes += B;
-                    
                     uint32_t evictionAddress = (line.tag << (s + b)) | (setIndex << b);
                     
                     // Queue the writeback request first
                     BusTransaction wbTrans(BusOp::WRITEBACK, evictionAddress, coreId);
                     bus->addPendingRequest(wbTrans);
+                    cache_bus_request++;
                 }
             }
         }
@@ -640,6 +648,7 @@ bool L1Cache::accessMemory(bool isWrite, uint32_t address, uint64_t current_cycl
         BusOp busOp = isWrite ? BusOp::BUS_RDX : BusOp::BUS_RD;
         BusTransaction readTrans(busOp, getBlockAddress(address), coreId);
         bus->addPendingRequest(readTrans);
+        cache_bus_request++;
         
         return false;  // Request not completed yet
     }
@@ -684,7 +693,6 @@ bool L1Cache::continuePendingAccess(uint64_t current_cycle) {
         line.state = CacheLineState::M;
         line.dirty = true;
         sets[setIndex].updateLRU(lineIndex);
-        execution_cycles++;
         has_pending_request = false;
         is_waiting_for_bus = false;
         hits++;
@@ -787,8 +795,7 @@ private:
 
 public:
     CacheSimulator(const string& prefix, int setBits, int assoc, int blockBits)
-        : tracePrefix(prefix), s(setBits), E(assoc), b(blockBits),
-          coreFinished(NUM_CORES, false), currentOps(NUM_CORES), currentAddrs(NUM_CORES, 0) {
+        : coreFinished(NUM_CORES, false), currentOps(NUM_CORES), currentAddrs(NUM_CORES, 0),tracePrefix(prefix), s(setBits), E(assoc), b(blockBits) {
 
         bus = make_shared<Bus>();
         bus->simulator = this;
@@ -814,6 +821,7 @@ public:
             currentAddrs[coreId] = stoul(addrStr, nullptr, 16);
         } else {
             coreFinished[coreId] = true;
+            caches[coreId]->modifytotalcycles(cycle_count);
         }
     }
 
@@ -850,23 +858,36 @@ public:
     }
 
     void printFinalStats(const string& outFilename) {
-        uint64_t total_invalidations = 0, total_traffic = 0;
-        for (auto& cache : caches) {
-            cache->printStats();
-            total_invalidations += cache->getInvalidations();
-            total_traffic += cache->getDataTrafficBytes();
-        }
-
-        cout << "\nTotal Invalidations: " << total_invalidations
-             << "\nTotal Bus Traffic: " << total_traffic << " bytes\n";
-
+        uint64_t total_invalidations = 0, total_traffic = 0, total_bus_requests = 0;
+        uint64_t maxExecTime = 0;
+            for (int i = 0; i < NUM_CORES; i++) {
+                maxExecTime = max(maxExecTime, caches[i]->getTotalCycles());
+            }
+            
         if (!outFilename.empty()) {
             ofstream out(outFilename);
-            for (int i = 0; i < NUM_CORES; i++) {
-                out << "Core " << i << " Miss Rate: " << caches[i]->getMissRate() << "%\n";
+            out<< "Simulation Parameters:"
+            << "\nTrace Prefix: " << tracePrefix
+            << "\nSet Index Bits: " << s
+            << "\nAssociativity: " << E
+            << "\nBlock Bits: " << b
+            << "\nBlock Size (Bytes): " << (1 << b)
+            << "\nNumber of Sets: " << (1 << s)
+            << "\nCache Size (KB per core): " << ((1 << s) * E * (1 << b))/1024 
+            << "\nMESI Protocol: Enabled"
+            << "\nWrite Policy: Write-back, Write-allocate"
+            << "\nReplacement Policy: LRU"
+            << "\nBus: Central snooping bus\n";
+            for (auto& cache : caches) {
+                cache->printStats(out);
+                total_invalidations += cache->getInvalidations();
+                total_traffic += cache->getDataTrafficBytes();
+                total_bus_requests += cache->cacheBusrequest();
             }
-            out << "Total Cycles: " << cycle_count << "\n";
-            out << "Total Bus Traffic (Bytes): " << total_traffic << "\n";
+            out << "\nOverall Bus Summary:"
+                << "\nTotal Bus Transactions: " << total_bus_requests
+                << "\nTotal Bus Traffic (Bytes): " << total_traffic
+                << "\nMaximum Execution Time:" << maxExecTime << endl;
             out.close();
         }
     }
