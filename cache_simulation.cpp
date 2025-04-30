@@ -237,38 +237,6 @@ public:
         os << "  Data Traffic (Bytes): " << data_traffic_bytes << endl;    
     }
 
-    // Print current cache state (for debugging)
-    void printCacheState() {
-        cout << "\nCurrent Cache State for Core " << coreId << ":\n";
-        cout << "==========================================\n";
-        for (size_t i = 0; i < sets.size(); i++) {
-            bool setUsed = false;
-            for (int j = 0; j < E; j++) {
-                if (sets[i].lines[j].valid) {
-                    setUsed = true;
-                    break;
-                }
-            }
-            if (!setUsed) continue;
-            
-            cout << "Set " << i << ":\n";
-            for (int j = 0; j < E; j++) {
-                const auto& line = sets[i].lines[j];
-                cout << "  Line " << j << ": ";
-                if (line.valid) {
-                    cout << "Valid, Tag=0x" << hex << line.tag << dec;
-                    cout << ", State=" << mesiStateToString(line.state);
-                    cout << ", Dirty=" << line.dirty;
-                    cout << ", LRU=" << line.lru_counter;
-                } else {
-                    cout << "Invalid";
-                }
-                cout << "\n";
-            }
-        }
-        cout << "==========================================\n";
-    }
-
     // Getter methods
     uint64_t getAccesses() const { return accesses; }
     uint64_t getHits() const { return hits; }
@@ -854,7 +822,6 @@ public:
             if (allDone) break;
         }
 
-        cout << "Simulation completed in " << cycle_count << " cycles\n";
     }
 
     void printFinalStats(const string& outFilename) {
@@ -886,8 +853,8 @@ public:
             }
             out << "\nOverall Bus Summary:"
                 << "\nTotal Bus Transactions: " << total_bus_requests
-                << "\nTotal Bus Traffic (Bytes): " << total_traffic
-                << "\nMaximum Execution Time:" << maxExecTime << endl;
+                << "\nTotal Bus Traffic (Bytes): " << total_traffic<< endl;
+                // << "\nMaximum Execution Time:" << maxExecTime << endl;
             out.close();
         }
     }
