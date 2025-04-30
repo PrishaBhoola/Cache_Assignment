@@ -25,6 +25,6 @@ run: $(OUT)
 
 # Clean
 clean:
-	rm -f $(OUT) *.o *.txt *.png results.csv tmp_out.txt
+	rm -f $(OUT) *.o *.txt  tmp_out.txt
 
 .PHONY: all run clean

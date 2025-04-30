@@ -223,7 +223,7 @@ public:
 
     // Print statistics
     void printStats(ostream& os = cout) {
-        os << "\nCache Statistics for Core " << coreId << ":" << endl;
+        os << "\nCore " << coreId << " Statistics:" << endl;
         os << "  Total Instructions: " << accesses << endl;
         os << "  Total Reads: " << reads << endl;
         os << "  Total Writes: " << writes << endl;
@@ -561,7 +561,7 @@ bool L1Cache::accessMemory(bool isWrite, uint32_t address, uint64_t current_cycl
         return true;
     } else {
         // Cache miss
-        idle_cycles++;
+        execution_cycles++;
         misses++;
         data_traffic_bytes += B;
         
@@ -628,6 +628,13 @@ bool L1Cache::continuePendingAccess(uint64_t current_cycle) {
         return true;  // No pending request
     }
     
+    if ((bus->hasPendingRequests() && bus->getNextPendingRequestCore() == coreId)){
+        if (bus->isBusy(current_cycle)) {
+            idle_cycles--;
+            execution_cycles++;
+        }
+        else execution_cycles++;
+    }
     // Wait for bus to be available
     if (bus->isBusy(current_cycle)) {
         idle_cycles++;
@@ -840,7 +847,7 @@ public:
             << "\nBlock Bits: " << b
             << "\nBlock Size (Bytes): " << (1 << b)
             << "\nNumber of Sets: " << (1 << s)
-            << "\nCache Size (KB per core): " << ((1 << s) * E * (1 << b))/1024 
+            << "\nCache Size (KB per core): " << ((float)((1 << s) * E * (1 << b)))/1024.0
             << "\nMESI Protocol: Enabled"
             << "\nWrite Policy: Write-back, Write-allocate"
             << "\nReplacement Policy: LRU"
