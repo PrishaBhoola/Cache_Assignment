@@ -468,6 +468,7 @@ int L1Cache::snoopBus(const BusTransaction& trans, uint64_t current_cycle) {
                 writebacks++;
                 data_traffic_bytes += B;
                 respondToTransaction = 2;
+                cache_bus_request++;
             } else if (line.state == CacheLineState::E || line.state == CacheLineState::S) {
                 // Just invalidate
                 line.state = CacheLineState::I;
@@ -607,7 +608,6 @@ bool L1Cache::accessMemory(bool isWrite, uint32_t address, uint64_t current_cycl
                     // Queue the writeback request first
                     BusTransaction wbTrans(BusOp::WRITEBACK, evictionAddress, coreId);
                     bus->addPendingRequest(wbTrans);
-                    cache_bus_request++;
                 }
             }
         }
